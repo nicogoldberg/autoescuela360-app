@@ -134,7 +134,7 @@ function pantallaLogin(modo = 'entrar', aviso = null) {
     msg.replaceChildren(h('div', { class: error ? 'error' : 'ok' }, error ? errorMsg(error) : 'Te mandamos un mail para cambiar la contraseña.'));
   };
   app.replaceChildren(h('div', { class: 'login' }, h('div', { class: 'caja' },
-    h('div', { class: 'logo-grande' }, '360'),
+    h('img', { class: 'logo-grande', src: 'logo.png', alt: 'Autoescuela 360' }),
     h('h1', {}, 'Autoescuela 360'),
     h('p', { class: 'sub' }, esReg ? 'Creá tu usuario' : 'Ingresá con tu usuario'),
     msg, form,
@@ -190,7 +190,7 @@ async function entrar(session) {
 
 function pantallaPendiente() {
   app.replaceChildren(h('div', { class: 'login' }, h('div', { class: 'caja' },
-    h('div', { class: 'logo-grande' }, '360'),
+    h('img', { class: 'logo-grande', src: 'logo.png', alt: 'Autoescuela 360' }),
     h('h1', {}, `Hola${S.perfil ? ', ' + S.perfil.nombre : ''}`),
     h('p', { class: 'sub' }, 'Tu cuenta está creada. Falta que un socio te dé acceso (vendedor o instructor) desde la sección Equipo.'),
     h('div', { class: 'acciones', style: 'justify-content:center' },
@@ -211,7 +211,7 @@ async function render() {
   app.replaceChildren(
     h('header', { class: 'top' },
       h('div', { class: 'top-fila' },
-        h('div', { class: 'marca' }, h('div', { class: 'logo' }, '360'), 'Autoescuela 360'),
+        h('div', { class: 'marca' }, h('img', { class: 'logo', src: 'logo.png', alt: '' }), 'Autoescuela 360'),
         h('div', { class: 'quien' }, `${S.perfil.nombre} · ${ROLES[rol()]}`, h('br'),
           h('button', { onclick: nuevaContrasena }, 'Contraseña'), ' · ',
           h('button', { onclick: () => sb.auth.signOut() }, 'Salir'))),
