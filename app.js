@@ -60,7 +60,7 @@ const ROLES = { pendiente: 'Pendiente', socio: 'Socio', vendedor: 'Vendedor', in
 // ---------------------------------------------------------------- estado
 const S = {
   user: null, perfil: null, perfiles: [], cursos: [], ajustes: {},
-  tab: null, semana: lunesDe(hoy()), filtroInstr: '', periodo: 'mes',
+  tab: null, mes: hoy().slice(0, 7), filtroInstr: '', periodo: 'mes',
   ventasQ: '', ventasEstado: 'todas',
 };
 const rol = () => S.perfil?.rol;
@@ -225,52 +225,93 @@ async function render() {
 const recargar = () => render();
 
 // ---------------------------------------------------------------- calendario
+const DOW = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const nombreCorto = c => (c.alumno || '').trim().split(/\s+/)[0];
+const mesTxt = ym => aFecha(ym + '-01').toLocaleDateString('es-AR', { month: 'short' }).replace('.', '');
+const sumarMes = (ym, n) => { const d = aFecha(ym + '-01'); d.setMonth(d.getMonth() + n); return iso(d).slice(0, 7); };
+
 async function vCalendario(main) {
-  const ini = S.semana, fin = sumarDias(ini, 6);
-  const clases = chk(await sb.from('clases').select('*').gte('fecha', ini).lte('fecha', fin).order('fecha').order('hora'));
+  const [y, m] = S.mes.split('-').map(Number);
+  const inicio = new Date(y, m - 1, 1); inicio.setDate(1 - inicio.getDay());          // domingo
+  const fin = new Date(y, m, 0); fin.setDate(fin.getDate() + (6 - fin.getDay()));      // sábado
+  const clases = chk(await sb.from('clases').select('*').gte('fecha', iso(inicio)).lte('fecha', iso(fin)).order('fecha').order('hora'));
   const agenda = ['socio', 'vendedor'].includes(rol());
+
+  // número de clase por alumno ("Ivana 2/6"): clases de 30 min acumuladas / total del curso
+  const etiquetas = {};
+  const vids = [...new Set(clases.map(c => c.venta_id).filter(Boolean))];
+  if (agenda && vids.length) {
+    const [todas, ventas] = await Promise.all([
+      sb.from('clases').select('id,venta_id,fecha,hora,duracion_min,estado').in('venta_id', vids),
+      sb.from('ventas').select('id,clases').in('id', vids)]);
+    const tot = Object.fromEntries(chk(ventas).map(v => [v.id, v.clases]));
+    for (const [vid, lista] of Object.entries(agrupar(chk(todas).filter(c => c.estado !== 'cancelada'), c => c.venta_id))) {
+      lista.sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+      let acc = 0;
+      for (const c of lista) { acc += c.duracion_min / 30; etiquetas[c.id] = tot[vid] ? `${acc}/${tot[vid]}` : ''; }
+    }
+  }
+  const texto = c => `${nombreCorto(c)}${etiquetas[c.id] ? ' ' + etiquetas[c.id] : ''}`;
+
   const instrNombres = [...new Set([...perfilesDe('instructor').map(p => p.nombre), ...clases.map(c => c.instructor_nombre).filter(Boolean)])].sort();
   const visibles = clases.filter(c => !S.filtroInstr || c.instructor_nombre === S.filtroInstr);
   const porDia = agrupar(visibles, c => c.fecha);
-  const lista = h('div');
 
-  const dias = [...Array(7)].map((_, i) => sumarDias(ini, i));
-  const chips = h('div', { class: 'dias' }, dias.map(d => {
-    const n = (porDia[d] || []).filter(c => c.estado !== 'cancelada').length;
-    return h('div', { class: 'dia-chip' + (d === hoy() ? ' hoy' : ''), onclick: () => document.getElementById('d' + d)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
-      h('div', { class: 'd' }, aFecha(d).toLocaleDateString('es-AR', { weekday: 'short' }).replace('.', '')),
-      h('div', { class: 'n' }, aFecha(d).getDate()),
-      h('div', { class: 'c' }, n ? `${n} cl.` : ''));
-  }));
-
-  for (const d of dias) {
-    const del = porDia[d] || [];
-    lista.append(h('div', { class: 'dia-tit', id: 'd' + d, style: 'scroll-margin-top:120px' },
-      aFecha(d).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })));
-    if (!del.length) lista.append(h('div', { class: 'ayuda', style: 'margin-bottom:6px' }, 'Sin clases'));
-    for (const c of del) {
-      lista.append(h('div', { class: 'clase ' + c.estado, onclick: () => agenda ? formClase(c) : modalEstadoClase(c) },
-        h('div', { class: 'hora' }, hm(c.hora), h('small', {}, finClase(c))),
-        h('div', { class: 'info' },
-          h('b', {}, c.alumno),
-          h('span', {}, [c.instructor_nombre || 'Sin instructor', c.lugar].filter(Boolean).join(' · '))),
-        h('div', {}, h('span', { class: 'chip ' + ESTADOS[c.estado][1] }, ESTADOS[c.estado][0]))));
-    }
+  // fila de meses (como Google Calendar)
+  const actual = hoy().slice(0, 7);
+  const meses = [...Array(10)].map((_, i) => sumarMes(actual, i - 2));
+  if (!meses.includes(S.mes)) meses.push(S.mes);
+  meses.sort();
+  const filaMeses = h('div', { class: 'meses' });
+  let anioPrev = meses[0].slice(0, 4);
+  for (const ym of meses) {
+    if (ym.slice(0, 4) !== anioPrev) { filaMeses.append(h('span', { class: 'anio' }, ym.slice(0, 4))); anioPrev = ym.slice(0, 4); }
+    filaMeses.append(h('button', { class: 'mes-chip' + (ym === S.mes ? ' on' : ''), onclick: () => { S.mes = ym; recargar(); } }, mesTxt(ym)));
   }
 
-  poner(main, 
-    h('div', { class: 'semana-nav' },
-      h('button', { class: 'btn sec chico', onclick: () => { S.semana = sumarDias(S.semana, -7); recargar(); } }, '‹'),
-      h('div', { class: 'tit' }, `${dm(ini)} al ${dm(fin)}`),
-      h('button', { class: 'btn sec chico', onclick: () => { S.semana = sumarDias(S.semana, 7); recargar(); } }, '›'),
-      h('button', { class: 'btn sec chico', onclick: () => { S.semana = lunesDe(hoy()); recargar(); } }, 'Hoy')),
-    chips,
+  const dias = [];
+  for (const d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) dias.push(iso(d));
+  const grilla = h('div', { class: 'mes' },
+    DOW.map(x => h('div', { class: 'mes-dow' }, x)),
+    dias.map(d => {
+      const lista = porDia[d] || [];
+      return h('div', { class: 'mes-dia' + (d.slice(0, 7) !== S.mes ? ' fuera' : '') + (d === hoy() ? ' hoy' : ''),
+        onclick: () => modalDia(d, lista, texto, agenda) },
+        h('div', { class: 'mes-num' }, h('span', {}, aFecha(d).getDate())),
+        lista.slice(0, 3).map(c => h('div', { class: 'ev ' + c.estado }, texto(c))),
+        lista.length > 3 && h('div', { class: 'mas' }, `+${lista.length - 3}`));
+    }));
+
+  poner(main,
+    h('div', { class: 'fila', style: 'margin-bottom:10px' },
+      h('h2', { style: 'margin:0' }, (t => t.charAt(0).toUpperCase() + t.slice(1))(aFecha(S.mes + '-01').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }))),
+      h('div', { style: 'display:flex;gap:6px' },
+        h('button', { class: 'btn sec chico', onclick: () => { S.mes = sumarMes(S.mes, -1); recargar(); } }, '‹'),
+        h('button', { class: 'btn sec chico', onclick: () => { S.mes = actual; recargar(); } }, 'Hoy'),
+        h('button', { class: 'btn sec chico', onclick: () => { S.mes = sumarMes(S.mes, 1); recargar(); } }, '›'))),
+    filaMeses,
     agenda && instrNombres.length > 0 && h('div', { class: 'buscar' },
       sel('', [['', 'Todos los instructores'], ...instrNombres.map(n => [n, n])], S.filtroInstr,
         { onchange: e => { S.filtroInstr = e.target.value; recargar(); } })),
-    rol() === 'instructor' && h('p', { class: 'ayuda' }, 'Tocá una clase para marcarla como dada o ausente.'),
-    lista,
-    agenda && h('button', { class: 'fab', onclick: () => formClase(null, { fecha: S.semana <= hoy() && hoy() <= fin ? hoy() : ini }) }, '+ Clase'));
+    grilla,
+    h('div', { class: 'leyenda' },
+      h('span', {}, h('i', { class: 'ev agendada' }), 'Agendada'), h('span', {}, h('i', { class: 'ev dada' }), 'Dada'),
+      h('span', {}, h('i', { class: 'ev ausente' }), 'Ausente'), h('span', {}, h('i', { class: 'ev cancelada' }), 'Cancelada')),
+    h('p', { class: 'ayuda' }, rol() === 'instructor' ? 'Tocá un día para ver tus clases y marcarlas como dadas.' : 'Tocá un día para ver el detalle y agendar.'),
+    agenda && h('button', { class: 'fab', onclick: () => formClase(null, { fecha: S.mes === actual ? hoy() : S.mes + '-01' }) }, '+ Clase'));
+  setTimeout(() => filaMeses.querySelector('.on')?.scrollIntoView({ inline: 'center', block: 'nearest' }), 0);
+}
+
+function modalDia(d, lista, texto, agenda) {
+  const cuerpo = lista.length ? lista.map(c => h('div', { class: 'clase ' + c.estado, onclick: () => { dlg.close(); agenda ? formClase(c) : modalEstadoClase(c); } },
+    h('div', { class: 'hora' }, hm(c.hora), h('small', {}, finClase(c))),
+    h('div', { class: 'info' }, h('b', {}, c.alumno + (texto(c) !== nombreCorto(c) ? ` · ${texto(c).split(' ').pop()}` : '')),
+      h('span', {}, [c.instructor_nombre || 'Sin instructor', c.lugar].filter(Boolean).join(' · '))),
+    h('div', {}, h('span', { class: 'chip ' + ESTADOS[c.estado][1] }, ESTADOS[c.estado][0]))))
+    : [h('div', { class: 'vacio' }, 'Sin clases este día.')];
+  const titulo = aFecha(d).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const dlg = modal(titulo.charAt(0).toUpperCase() + titulo.slice(1), ...cuerpo,
+    agenda && h('div', { class: 'acciones' }, h('button', { class: 'btn amarillo', onclick: () => { dlg.close(); formClase(null, { fecha: d }); } }, '+ Agendar clase este día')));
 }
 
 async function formClase(clase, pre = {}) {
@@ -346,7 +387,7 @@ async function formClase(clase, pre = {}) {
     }, clase ? 'Clase actualizada' : 'Clase agendada');
     if (ok) {
       d.close();
-      if (S.tab === 'calendario') { S.semana = lunesDe(fila.fecha); }
+      if (S.tab === 'calendario') { S.mes = fila.fecha.slice(0, 7); }
       recargar();
     }
   };
